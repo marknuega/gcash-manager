@@ -1,0 +1,8 @@
+node_modules
+dist
+.DS_Store
+*.log
+
+# secrets — never commit
+server/.env
+.env.local
