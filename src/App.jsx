@@ -184,12 +184,6 @@ function LoginScreen({accounts,onLogin}){
         <Inp label="Password" value={pass} onChange={v=>{setPass(v);setErr("");}} type="password" placeholder="••••••••" req/>
         {err&&<div style={{color:C.red,fontSize:13,marginBottom:10,fontWeight:600}}>{err}</div>}
         <Btn onClick={login} style={{width:"100%",padding:"12px",fontSize:15}}>Sign In</Btn>
-        <div style={{marginTop:16,padding:12,background:C.bg,borderRadius:10,fontSize:12,color:C.muted}}>
-          <strong>Demo accounts:</strong><br/>
-          admin / admin123 (Owner)<br/>
-          maria / pass1234 (Divisoria)<br/>
-          juan / pass1234 (Cubao)
-        </div>
       </div>
     </div>
   );

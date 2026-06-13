@@ -12,7 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 const ADMIN_PW = process.env.SEED_ADMIN_PASSWORD || "admin123";
-const CASHIER_PW = "pass1234";
+const CASHIER_PW = "pass4645";
 
 const OUTLETS = [
   { name: "Divisoria Branch", location: "Divisoria, Manila", color: "#0070BA", float: 15000, cashier: { name: "Maria Santos", username: "maria" } },
