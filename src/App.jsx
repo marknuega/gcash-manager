@@ -35,11 +35,17 @@ const LOAD_DENOMINATIONS = [10,15,20,30,50,60,100,115,150,200,300,500,1000];
 const PERA_PADALA_NETS = ["LBC","Palawan Express","M Lhuillier","Western Union","Cebuana Lhuillier","JRS Express"];
 
 const SEED_OUTLETS = [
-  {id:"o1", name:"Divisoria Branch",  location:"Divisoria, Manila",  color:"#0070BA"},
-  {id:"o2", name:"Cubao Branch",      location:"Cubao, QC",           color:"#00A859"},
-  {id:"o3", name:"Caloocan Branch",   location:"Caloocan City",       color:"#7C3AED"},
-  {id:"o4", name:"Pasay Branch",      location:"Pasay City",          color:"#F5A623"},
+  {id:"o0", name:"Bulacan Main",      location:"Bulacan",             color:"#0070BA", isDefault:true},
+  {id:"o1", name:"Divisoria Branch",  location:"Divisoria, Manila",  color:"#00A859"},
+  {id:"o2", name:"Cubao Branch",      location:"Cubao, QC",           color:"#7C3AED"},
+  {id:"o3", name:"Caloocan Branch",   location:"Caloocan City",       color:"#F5A623"},
+  {id:"o4", name:"Pasay Branch",      location:"Pasay City",          color:"#0891B2"},
 ];
+
+// The default branch: explicit isDefault flag, else a "Bulacan Main" name match
+// (so it also resolves against server outlets), else the first outlet.
+const getDefaultOutlet = (outlets=[]) =>
+  outlets.find(o=>o.isDefault) || outlets.find(o=>/bulacan\s*main/i.test(o.name)) || outlets[0] || null;
 
 // ACCOUNTS: owner + one cashier per outlet
 const SEED_ACCOUNTS = [
@@ -50,7 +56,7 @@ const SEED_ACCOUNTS = [
   {id:"a4", name:"Pedro Garcia",     username:"pedro",   password:"pass1234",  role:"cashier", outlet:"o4"},
 ];
 
-const SEED_FLOATS = {o1:15000, o2:12000, o3:18000, o4:10000};
+const SEED_FLOATS = {o0:20000, o1:15000, o2:12000, o3:18000, o4:10000};
 
 const SEED_TXN = [
   {id:"t1",type:"cash-in",   amount:500,  fee:0,  outlet:"o1",accountId:"a1",customerName:"Rosa Lim",   note:"",          subType:"",       date:new Date(Date.now()-86400000*2).toISOString()},
@@ -192,10 +198,10 @@ function LoginScreen({accounts,onLogin}){
 // ─────────────────────────────────────────────
 // TRANSACTION FORM (smart multi-step)
 // ─────────────────────────────────────────────
-function TxnForm({onSave,onClose,outlets,accounts,currentUser,floats}){
+function TxnForm({onSave,onClose,outlets,accounts,currentUser,floats,defaultOutletId}){
   const [step,setStep]=useState(1); // 1=service, 2=details
   const [type,setType]=useState("");
-  const [form,setForm]=useState({amount:"",fee:"",customerName:"",customerPhone:"",note:"",subType:"",outletId:currentUser.role==="cashier"?currentUser.outlet:"",accountId:currentUser.id});
+  const [form,setForm]=useState({amount:"",fee:"",customerName:"",customerPhone:"",note:"",subType:"",outletId:currentUser.role==="cashier"?currentUser.outlet:(defaultOutletId||""),accountId:currentUser.id});
   const [toast,setToast]=useState(null);
 
   const svc = type?SERVICE_TYPES[type]:null;
@@ -307,6 +313,93 @@ function TxnForm({onSave,onClose,outlets,accounts,currentUser,floats}){
 
       <div style={{display:"flex",gap:10}}>
         <Btn onClick={save} variant="success" style={{flex:1}}>Save Transaction</Btn>
+        <Btn onClick={onClose} variant="ghost">Cancel</Btn>
+      </div>
+      {toast&&<Toast msg={toast.msg} type={toast.type}/>}
+    </Modal>
+  );
+}
+
+// ─────────────────────────────────────────────
+// LEDGER ENTRY FORM (quick passbook-style add: In/Out + Charge)
+// Mirrors the notebook: pick a direction, an amount, and the charge.
+// In  → cash-in (cash received, drawer up) · Out → cash-out (cash handed out).
+// ─────────────────────────────────────────────
+function LedgerEntryForm({onSave,onClose,outlets,currentUser,floats,defaultOutletId}){
+  const isAdmin=currentUser.role==="admin";
+  const availOutlets=isAdmin?outlets:outlets.filter(o=>o.id===currentUser.outlet);
+  const [dir,setDir]=useState("in");          // "in" | "out"
+  const [form,setForm]=useState({
+    amount:"", charge:"", customerName:"", note:"", date:todayStr(),
+    outletId: isAdmin ? (defaultOutletId||"") : currentUser.outlet,
+  });
+  const [toast,setToast]=useState(null);
+  const setF=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  const type = dir==="in" ? "cash-in" : "cash-out";
+  const effect = SERVICE_TYPES[type].floatEffect;
+  const amt=Number(form.amount||0), chg=Number(form.charge||0);
+  const curFloat=floats[form.outletId]||0;
+  const newFloat=curFloat+(effect*amt)+chg;
+
+  const save=()=>{
+    if(!form.outletId||!(amt>0)){
+      setToast({msg:"Pick a branch and enter an amount.",type:"error"});
+      setTimeout(()=>setToast(null),2500);
+      return;
+    }
+    // Build an ISO timestamp on the chosen day (MOCK keeps the date; the server
+    // timestamps server-side, so real-mode entries are dated today).
+    const date = form.date===todayStr()
+      ? new Date().toISOString()
+      : new Date(form.date+"T12:00:00").toISOString();
+    onSave({
+      txn:{id:uid(),type,amount:amt,fee:chg,outlet:form.outletId,accountId:currentUser.id,
+        customerName:form.customerName,customerPhone:"",note:form.note,subType:"",date},
+      outletId:form.outletId,newFloat,
+    });
+  };
+
+  return(
+    <Modal title="📒 Ledger Entry" onClose={onClose}>
+      <div style={{fontSize:12,color:C.muted,marginBottom:14}}>Quick passbook entry — In or Out, plus your charge.</div>
+
+      {/* Direction toggle */}
+      <div style={{display:"flex",gap:10,marginBottom:14}}>
+        {[{k:"in",l:"⬇️ In (cash received)",c:C.green,bg:C.greenL},{k:"out",l:"⬆️ Out (cash given)",c:C.orange,bg:C.orangeL}].map(d=>(
+          <button key={d.k} onClick={()=>setDir(d.k)}
+            style={{flex:1,padding:"12px 8px",borderRadius:12,cursor:"pointer",fontWeight:800,fontSize:13,
+              border:`2px solid ${dir===d.k?d.c:C.border}`,background:dir===d.k?d.bg:C.white,color:dir===d.k?d.c:C.muted}}>
+            {d.l}
+          </button>
+        ))}
+      </div>
+
+      {isAdmin&&(
+        <Sel label="Branch" value={form.outletId} onChange={v=>setF("outletId",v)} req
+          options={availOutlets.map(o=>({value:o.id,label:o.name+(getDefaultOutlet(outlets)?.id===o.id?" (Default)":"")}))}/>
+      )}
+
+      <Inp label={dir==="in"?"Amount In (₱)":"Amount Out (₱)"} type="number" value={form.amount} onChange={v=>setF("amount",v)} req/>
+      <Inp label="Charge / Fee (₱)" type="number" value={form.charge} onChange={v=>setF("charge",v)}/>
+      <div style={{marginBottom:12}}>
+        <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:4}}>Date</div>
+        <input type="date" value={form.date} onChange={e=>setF("date",e.target.value)}
+          style={{width:"100%",border:`1.5px solid ${C.border}`,borderRadius:8,padding:"8px 12px",fontSize:14,background:C.bg,boxSizing:"border-box"}}/>
+      </div>
+      <Inp label="Customer Name (optional)" value={form.customerName} onChange={v=>setF("customerName",v)}/>
+      <Inp label="Note (optional)" value={form.note} onChange={v=>setF("note",v)}/>
+
+      {form.outletId&&amt>0&&(
+        <div style={{background:C.bg,borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:13}}>
+          <span style={{color:C.muted}}>Float: <strong>{peso(curFloat)}</strong></span>{"  →  "}
+          <span style={{color:C.green,fontWeight:700}}>{peso(newFloat)}</span>
+          {chg>0&&<span style={{color:C.blue,fontWeight:700}}>  · +{peso(chg)} kita</span>}
+        </div>
+      )}
+
+      <div style={{display:"flex",gap:10}}>
+        <Btn onClick={save} variant="success" style={{flex:1}}>Save Entry</Btn>
         <Btn onClick={onClose} variant="ghost">Cancel</Btn>
       </div>
       {toast&&<Toast msg={toast.msg} type={toast.type}/>}
@@ -435,7 +528,8 @@ export default function App(){
     ? [{id:"dashboard",l:"📊 Dashboard"},{id:"txns",l:"💸 Transactions"},{id:"ledger",l:"📒 Ledger"},{id:"float",l:"💰 Float"},{id:"staff",l:"👥 Staff"},{id:"customers",l:"📋 Customers"},{id:"outlets",l:"🏪 Outlets"},{id:"accounts",l:"🔐 Accounts"},{id:"reports",l:"📄 Reports"}]
     : [{id:"dashboard",l:"📊 My Outlet"},{id:"txns",l:"💸 Transactions"},{id:"ledger",l:"📒 Ledger"},{id:"customers",l:"📋 Customers"},{id:"reports",l:"📄 Reports"}];
 
-  const ctx={accounts,outlets,txns,customers,floats,session,isAdmin,visibleTxns,visibleOutlets,addTxn,setFloat,addCustomer,deleteCustomer,addOutlet,deleteOutlet,saveAccount,deleteAccount,showToast};
+  const defaultOutletId = getDefaultOutlet(visibleOutlets)?.id || null;
+  const ctx={accounts,outlets,txns,customers,floats,session,isAdmin,visibleTxns,visibleOutlets,defaultOutletId,addTxn,setFloat,addCustomer,deleteCustomer,addOutlet,deleteOutlet,saveAccount,deleteAccount,showToast};
 
   return(
     <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",background:C.bg,minHeight:"100vh",color:C.ink}}>
@@ -555,8 +649,9 @@ function Dashboard({ctx}){
 // TRANSACTIONS
 // ─────────────────────────────────────────────
 function Transactions({ctx}){
-  const {visibleTxns,visibleOutlets,accounts,floats,session,isAdmin,addTxn,outlets}=ctx;
+  const {visibleTxns,visibleOutlets,accounts,floats,session,isAdmin,addTxn,outlets,defaultOutletId}=ctx;
   const [modal,setModal]=useState(false);
+  const [ledgerModal,setLedgerModal]=useState(false);
   const [fOut,setFOut]=useState("");
   const [fType,setFType]=useState("");
   const [fDate,setFDate]=useState(todayStr());
@@ -577,7 +672,10 @@ function Transactions({ctx}){
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <div style={{fontWeight:800,fontSize:20}}>Transactions</div>
-        <Btn onClick={()=>setModal(true)}>+ New Transaction</Btn>
+        <div style={{display:"flex",gap:8}}>
+          <Btn onClick={()=>setLedgerModal(true)} variant="ghost">📒 Ledger Entry</Btn>
+          <Btn onClick={()=>setModal(true)}>+ New Transaction</Btn>
+        </div>
       </div>
 
       <Card style={{marginBottom:14}}>
@@ -625,7 +723,8 @@ function Transactions({ctx}){
         );
       })}
 
-      {modal&&<TxnForm onSave={(data)=>{addTxn(data);setModal(false);}} onClose={()=>setModal(false)} outlets={outlets} accounts={accounts} currentUser={session} floats={floats}/>}
+      {modal&&<TxnForm onSave={(data)=>{addTxn(data);setModal(false);}} onClose={()=>setModal(false)} outlets={outlets} accounts={accounts} currentUser={session} floats={floats} defaultOutletId={defaultOutletId}/>}
+      {ledgerModal&&<LedgerEntryForm onSave={(data)=>{addTxn(data);setLedgerModal(false);}} onClose={()=>setLedgerModal(false)} outlets={visibleOutlets} currentUser={session} floats={floats} defaultOutletId={defaultOutletId}/>}
     </div>
   );
 }
@@ -893,7 +992,10 @@ function OutletManager({ctx}){
           <Card key={o.id} style={{marginBottom:14,borderLeft:`4px solid ${o.color}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
               <div>
-                <div style={{fontWeight:800,fontSize:16}}>🏪 {o.name}</div>
+                <div style={{fontWeight:800,fontSize:16,display:"flex",alignItems:"center",gap:8}}>
+                  🏪 {o.name}
+                  {getDefaultOutlet(outlets)?.id===o.id&&<Badge color={C.blue} bg={C.blueL}>★ Default</Badge>}
+                </div>
                 <div style={{fontSize:13,color:C.muted}}>📍 {o.location}</div>
                 <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
                   <Badge color={C.blue} bg={C.blueL}>👥 {outStaff.length} staff</Badge>

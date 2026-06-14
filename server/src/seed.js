@@ -15,7 +15,8 @@ const ADMIN_PW = process.env.SEED_ADMIN_PASSWORD || "admin123";
 const CASHIER_PW = "pass4645";
 
 const OUTLETS = [
-  { name: "Divisoria Branch", location: "Divisoria, Manila", color: "#0070BA", float: 15000, cashier: { name: "Maria Santos", username: "maria" } },
+  { name: "Bulacan Main", location: "Bulacan", color: "#0070BA", float: 20000, cashier: { name: "Bulacan Cashier", username: "bulacan" } },
+  { name: "Divisoria Branch", location: "Divisoria, Manila", color: "#00A859", float: 15000, cashier: { name: "Maria Santos", username: "maria" } },
   { name: "Cubao Branch", location: "Cubao, QC", color: "#00A859", float: 12000, cashier: { name: "Juan dela Cruz", username: "juan" } },
   { name: "Caloocan Branch", location: "Caloocan City", color: "#7C3AED", float: 18000, cashier: { name: "Ana Reyes", username: "ana" } },
   { name: "Pasay Branch", location: "Pasay City", color: "#F5A623", float: 10000, cashier: { name: "Pedro Garcia", username: "pedro" } },
