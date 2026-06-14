@@ -46,10 +46,21 @@ If you ever need a true point-in-time rewind of the whole database, use Neon's
 own **Restore / branching** feature in the Neon dashboard (its retention window
 depends on your Neon plan — verify it covers at least a day or two).
 
-## Automating it (optional)
-- **Windows Task Scheduler:** create a daily task that runs
-  `npm --prefix "C:\path\to\server" run backup`, then syncs `server/backups` to
-  a cloud-synced folder.
-- **GitHub Actions:** a scheduled workflow can run `npm run backup` with the
-  `DATABASE_URL` stored as an encrypted repo secret and upload the JSON as a
-  build artifact. Ask and this can be added.
+## Automatic daily backup (already set up)
+A GitHub Actions workflow runs the backup every day in the cloud — no laptop
+needed: [.github/workflows/db-backup.yml](../.github/workflows/db-backup.yml).
+It runs at **02:00 Manila time** daily and uploads each snapshot as an artifact
+kept for 90 days.
+
+**One-time setup (required for it to run):**
+1. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**
+2. Name `DATABASE_URL`, value = your Neon connection string (same as Render).
+
+**To run it now / download a backup:**
+- Repo → **Actions** tab → *Database Backup* → **Run workflow** (manual trigger).
+- Open the finished run → **Artifacts** → download the `.json`.
+
+**Alternative (laptop-based):** Windows Task Scheduler running
+`npm --prefix "C:\path\to\server" run backup`, with `server/backups` synced to a
+cloud folder. Only runs while the PC is on, so the GitHub Action above is
+preferred.

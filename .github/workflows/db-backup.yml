@@ -1,0 +1,50 @@
+name: Database Backup
+
+# Automatic daily backup of the Neon Postgres database. Runs in the cloud, so
+# it works even when no one's laptop is on. Each run uploads a JSON snapshot as
+# a downloadable artifact (kept 90 days). You can also trigger it manually from
+# the Actions tab.
+#
+# REQUIRED ONE-TIME SETUP:
+#   GitHub repo -> Settings -> Secrets and variables -> Actions -> New secret
+#   Name:  DATABASE_URL
+#   Value: your Neon connection string (same one set in Render)
+
+on:
+  schedule:
+    - cron: "0 18 * * *" # 18:00 UTC daily = 2:00 AM Manila (PHT, UTC+8)
+  workflow_dispatch: {}   # allow manual "Run workflow"
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Run backup
+        working-directory: server
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run backup
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: server/backups/*.json
+          retention-days: 90
+          if-no-files-found: error
