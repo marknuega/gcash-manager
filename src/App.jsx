@@ -38,16 +38,19 @@ const PERA_PADALA_NETS = ["LBC","Palawan Express","M Lhuillier","Western Union",
 // charge, so common entries are one tap instead of typing. Tiers mirror the
 // agent notebook (₱100→₱5, ₱500→₱10, ₱1,000→₱15, ₱2,000→₱30, ₱5,000→₱75…).
 const DEFAULT_CHARGE_PRESETS = [
-  {id:"p100",  amount:100,  charge:5 },
-  {id:"p200",  amount:200,  charge:10},
-  {id:"p300",  amount:300,  charge:10},
-  {id:"p500",  amount:500,  charge:10},
-  {id:"p1000", amount:1000, charge:15},
-  {id:"p1500", amount:1500, charge:20},
-  {id:"p2000", amount:2000, charge:30},
-  {id:"p3000", amount:3000, charge:45},
-  {id:"p5000", amount:5000, charge:75},
+  {amount:100,  charge:5 },
+  {amount:200,  charge:10},
+  {amount:300,  charge:10},
+  {amount:500,  charge:10},
+  {amount:1000, charge:15},
+  {amount:1500, charge:20},
+  {amount:2000, charge:30},
+  {amount:3000, charge:45},
+  {amount:5000, charge:75},
 ];
+// Presets are per outlet — give each seed outlet its own default set (MOCK mode).
+const seedPresets = (outlets) =>
+  outlets.flatMap(o=>DEFAULT_CHARGE_PRESETS.map(p=>({id:`${o.id}-p${p.amount}`,amount:p.amount,charge:p.charge,outlet:o.id})));
 
 const SEED_OUTLETS = [
   {id:"o0", name:"Bulacan Main",      location:"Bulacan",             color:"#0070BA", isDefault:true},
@@ -348,7 +351,7 @@ function LedgerEntryForm({onSave,onClose,outlets,currentUser,floats,defaultOutle
     amount: initial?.amount!=null?String(initial.amount):"",
     charge: initial?.charge!=null?String(initial.charge):"",
     customerName:"", note:"", date:todayStr(),
-    outletId: isAdmin ? (defaultOutletId||"") : currentUser.outlet,
+    outletId: initial?.outletId || (isAdmin ? (defaultOutletId||"") : currentUser.outlet),
   });
   const [toast,setToast]=useState(null);
   const setF=(k,v)=>setForm(p=>({...p,[k]:v}));
@@ -433,7 +436,7 @@ export default function App(){
   const [txns,      setTxns]      = useState(()=>MOCK?ls.get(KEYS.txns,      SEED_TXN):[]);
   const [customers, setCustomers] = useState(()=>MOCK?ls.get(KEYS.customers, SEED_CUSTOMERS):[]);
   const [floats,    setFloats]    = useState(()=>MOCK?ls.get(KEYS.floats,    SEED_FLOATS):{});
-  const [presets,   setPresets]   = useState(()=>MOCK?ls.get(KEYS.presets, DEFAULT_CHARGE_PRESETS):[]);
+  const [presets,   setPresets]   = useState(()=>MOCK?ls.get(KEYS.presets, seedPresets(SEED_OUTLETS)):[]);
   const [session,   setSession]   = useState(null);
   const [tab,       setTab]       = useState("dashboard");
   const [toast,     setToast]     = useState(null);
@@ -449,8 +452,8 @@ export default function App(){
   useEffect(()=>{ if(MOCK) ls.set(KEYS.presets, presets); },[presets]);
 
   const addPreset=async(p)=>{
-    if(MOCK){ setPresets(prev=>[...prev,{id:uid(),amount:Number(p.amount),charge:Number(p.charge)}]); return; }
-    const created=await api.post("/presets",{amount:Number(p.amount),charge:Number(p.charge)});
+    if(MOCK){ setPresets(prev=>[...prev,{id:uid(),amount:Number(p.amount),charge:Number(p.charge),outlet:p.outlet}]); return; }
+    const created=await api.post("/presets",{amount:Number(p.amount),charge:Number(p.charge),outlet:p.outlet});
     setPresets(prev=>[...prev,created].sort((a,b)=>a.amount-b.amount));
   };
   const deletePreset=async(id)=>{
@@ -550,8 +553,9 @@ export default function App(){
 
   const isAdmin = session.role==="admin";
 
-  // Filter txns by outlet for cashiers
-  const visibleTxns = isAdmin ? txns : txns.filter(t=>t.outlet===session.outlet);
+  // Only the owner (admin) sees every branch. A non-owner account sees ONLY its
+  // own transactions and its own outlet.
+  const visibleTxns = isAdmin ? txns : txns.filter(t=>t.accountId===session.id);
   const visibleOutlets = isAdmin ? outlets : outlets.filter(o=>o.id===session.outlet);
 
   const TABS = isAdmin
@@ -685,6 +689,8 @@ function Transactions({ctx}){
   const [ledgerInit,setLedgerInit]=useState(null);   // prefill from a charge preset
   const [editPresets,setEditPresets]=useState(false);
   const [newPreset,setNewPreset]=useState({amount:"",charge:""});
+  // Which branch's preset list is shown/edited. Cashier is locked to their own.
+  const [presetOutlet,setPresetOutlet]=useState(isAdmin?(defaultOutletId||visibleOutlets[0]?.id||""):session.outlet);
   const [fOut,setFOut]=useState("");
   const [fType,setFType]=useState("");
   const [fDate,setFDate]=useState(todayStr());
@@ -711,20 +717,31 @@ function Transactions({ctx}){
         </div>
       </div>
 
-      {/* ── Quick Charge presets ── tap a repeat amount instead of typing ── */}
+      {/* ── Quick Charge presets (per branch) ── tap a repeat amount ── */}
       <Card style={{marginBottom:14}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div style={{fontWeight:700}}>⚡ Quick Charge</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
+          <div style={{fontWeight:700}}>⚡ Quick Charge {isAdmin&&<span style={{fontWeight:500,color:C.muted,fontSize:13}}>· {outlets.find(o=>o.id===presetOutlet)?.name||"—"}</span>}</div>
           <button onClick={()=>setEditPresets(e=>!e)}
             style={{background:"none",border:"none",color:C.blue,fontWeight:700,fontSize:12,cursor:"pointer"}}>
             {editPresets?"Done":"Edit"}
           </button>
         </div>
+        {isAdmin&&visibleOutlets.length>1&&(
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+            {visibleOutlets.map(o=>(
+              <button key={o.id} onClick={()=>setPresetOutlet(o.id)}
+                style={{padding:"5px 12px",borderRadius:99,border:`1.5px solid ${presetOutlet===o.id?C.blue:C.border}`,
+                  background:presetOutlet===o.id?C.blue:C.white,color:presetOutlet===o.id?"#fff":C.muted,fontWeight:700,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>
+                {o.name}
+              </button>
+            ))}
+          </div>
+        )}
         <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Tap an amount to start a ledger entry with its charge already filled in.</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(108px,1fr))",gap:10}}>
-          {presets.map(p=>(
+          {presets.filter(p=>p.outlet===presetOutlet).map(p=>(
             <div key={p.id} style={{position:"relative"}}>
-              <button onClick={()=>{setLedgerInit({amount:p.amount,charge:p.charge});setLedgerModal(true);}}
+              <button onClick={()=>{setLedgerInit({amount:p.amount,charge:p.charge,outletId:presetOutlet});setLedgerModal(true);}}
                 style={{width:"100%",background:C.blueL,border:`1.5px solid ${C.blue}33`,borderRadius:12,padding:"12px 8px",cursor:"pointer",textAlign:"center"}}>
                 <div style={{fontWeight:900,fontSize:17,color:C.blue}}>{peso(p.amount)}</div>
                 <div style={{fontSize:12,color:C.green,fontWeight:700,marginTop:2}}>+{peso(p.charge)} charge</div>
@@ -735,7 +752,7 @@ function Transactions({ctx}){
               )}
             </div>
           ))}
-          {presets.length===0&&<div style={{fontSize:13,color:C.muted}}>No presets. Add one →</div>}
+          {presets.filter(p=>p.outlet===presetOutlet).length===0&&<div style={{fontSize:13,color:C.muted}}>No presets for this branch. Add one →</div>}
         </div>
         {editPresets&&(
           <div style={{display:"flex",gap:8,alignItems:"flex-end",marginTop:14,flexWrap:"wrap"}}>
@@ -746,8 +763,9 @@ function Transactions({ctx}){
               <input type="number" value={newPreset.charge} onChange={e=>setNewPreset(p=>({...p,charge:e.target.value}))}
                 style={{width:"100%",border:`1.5px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:14,background:C.bg,boxSizing:"border-box"}}/></div>
             <Btn variant="success" onClick={async()=>{
+              if(!presetOutlet){showToast("Pick a branch first.","error");return;}
               if(!(Number(newPreset.amount)>0)){showToast("Enter a valid amount.","error");return;}
-              try{ await addPreset(newPreset); setNewPreset({amount:"",charge:""}); showToast("Preset added."); }
+              try{ await addPreset({...newPreset,outlet:presetOutlet}); setNewPreset({amount:"",charge:""}); showToast("Preset added."); }
               catch(e){ showToast(e.message||"Could not add preset.","error"); }
             }}>+ Add Preset</Btn>
           </div>
@@ -1210,15 +1228,23 @@ function AccountManager({ctx}){
 // and TOTAL is the running cumulative of all charges = total "kita".
 // ─────────────────────────────────────────────
 function Ledger({ctx}){
-  const {visibleTxns}=ctx;
+  const {visibleTxns,isAdmin,visibleOutlets,defaultOutletId,outlets}=ctx;
   const [month,setMonth]=useState("all"); // "all" | "YYYY-MM"
+  // Each branch has its own passbook. Owner picks a branch (default = default
+  // branch) so the running total stays separate per branch; a non-owner already
+  // sees only their own account, so no selector is shown for them.
+  const [outlet,setOutlet]=useState(isAdmin?(defaultOutletId||visibleOutlets[0]?.id||"all"):"own");
 
   const num=n=>Number(n).toLocaleString("en-PH");
   const monthLabel=m=>new Date(m+"-01T00:00:00").toLocaleDateString("en-PH",{month:"long",year:"numeric"});
   const dayLabel=iso=>new Date(iso).toLocaleDateString("en-PH",{month:"numeric",day:"numeric"});
 
+  // Scope to the chosen branch (owner). A branch's running total must be computed
+  // over only that branch's transactions.
+  const base = (isAdmin && outlet!=="all") ? visibleTxns.filter(t=>t.outlet===outlet) : visibleTxns;
+
   // Chronological order so the running TOTAL accumulates exactly like the notebook.
-  const chron=[...visibleTxns].sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const chron=[...base].sort((a,b)=>new Date(a.date)-new Date(b.date));
   let run=0;
   const rows=chron.map(t=>{
     const charge=Number(t.fee||0);
@@ -1249,10 +1275,31 @@ function Ledger({ctx}){
 
   return(
     <div>
-      <div style={{fontWeight:800,fontSize:20,marginBottom:4}}>GCash Ledger / Passbook</div>
+      <div style={{fontWeight:800,fontSize:20,marginBottom:4}}>
+        GCash Ledger / Passbook
+        {isAdmin&&outlet!=="all"&&<span style={{fontWeight:500,color:C.muted,fontSize:15}}> · {outlets.find(o=>o.id===outlet)?.name||""}</span>}
+      </div>
       <div style={{fontSize:13,color:C.muted,marginBottom:16}}>
         Running record of cash <strong>in</strong>, cash <strong>out</strong>, charges, and total kita — just like your notebook.
       </div>
+
+      {/* ── Branch picker (owner only) — separate passbook per branch ── */}
+      {isAdmin&&visibleOutlets.length>1&&(
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+          {visibleOutlets.map(o=>(
+            <button key={o.id} onClick={()=>setOutlet(o.id)}
+              style={{padding:"6px 14px",borderRadius:99,border:`1.5px solid ${outlet===o.id?C.blue:C.border}`,
+                background:outlet===o.id?C.blue:C.white,color:outlet===o.id?"#fff":C.muted,fontWeight:700,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>
+              {o.name}
+            </button>
+          ))}
+          <button onClick={()=>setOutlet("all")}
+            style={{padding:"6px 14px",borderRadius:99,border:`1.5px solid ${outlet==="all"?C.ink:C.border}`,
+              background:outlet==="all"?C.ink:C.white,color:outlet==="all"?"#fff":C.muted,fontWeight:700,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>
+            All branches (combined)
+          </button>
+        </div>
+      )}
 
       {/* ── Monthly Kita summary (GCASH KITA) ── */}
       {monthly.length>0&&(

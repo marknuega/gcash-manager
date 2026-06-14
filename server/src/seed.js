@@ -68,20 +68,19 @@ async function run() {
       outlet_id: outletId,
       password: CASHIER_PW,
     });
+    // Per-outlet default quick-charge presets (only if this branch has none).
+    const has = await query("SELECT count(*)::int AS n FROM charge_presets WHERE outlet_id=$1", [outletId]);
+    if (has.rows[0].n === 0) {
+      for (const [amount, charge] of [[100,5],[200,10],[300,10],[500,10],[1000,15],[1500,20],[2000,30],[3000,45],[5000,75]]) {
+        await query("INSERT INTO charge_presets (amount, charge, outlet_id) VALUES ($1,$2,$3)", [amount, charge, outletId]);
+      }
+    }
   }
 
   for (const c of CUSTOMERS) {
     const existing = await query("SELECT id FROM customers WHERE name=$1 AND phone=$2", [c.name, c.phone]);
     if (existing.rowCount === 0) {
       await query("INSERT INTO customers (name, phone, address, note) VALUES ($1,$2,$3,$4)", [c.name, c.phone, c.address, c.note]);
-    }
-  }
-
-  // Default quick-charge presets (notebook tiers) — only if none exist yet.
-  const presetCount = await query("SELECT count(*)::int AS n FROM charge_presets");
-  if (presetCount.rows[0].n === 0) {
-    for (const [amount, charge] of [[100,5],[200,10],[300,10],[500,10],[1000,15],[1500,20],[2000,30],[3000,45],[5000,75]]) {
-      await query("INSERT INTO charge_presets (amount, charge) VALUES ($1,$2)", [amount, charge]);
     }
   }
 

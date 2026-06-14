@@ -57,20 +57,31 @@ app.get(/^(?!\/api).*/, (req, res) => {
 
 // Lightweight auto-migration: ensure tables added after the initial setup exist
 // (the live DB doesn't re-run schema.sql on deploy). Idempotent and safe.
+export const DEFAULT_PRESETS = [[100,5],[200,10],[300,10],[500,10],[1000,15],[1500,20],[2000,30],[3000,45],[5000,75]];
+
 async function ensureSchema() {
   try {
     await query(`CREATE TABLE IF NOT EXISTS charge_presets (
       id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       amount      numeric(12,2) NOT NULL,
       charge      numeric(12,2) NOT NULL DEFAULT 0,
+      outlet_id   uuid REFERENCES outlets(id) ON DELETE CASCADE,
       created_at  timestamptz NOT NULL DEFAULT now()
     )`);
-    // Seed default quick-charge tiers the first time (only when empty).
-    const { rows } = await query("SELECT count(*)::int AS n FROM charge_presets");
-    if (rows[0].n === 0) {
-      const defaults = [[100,5],[200,10],[300,10],[500,10],[1000,15],[1500,20],[2000,30],[3000,45],[5000,75]];
-      for (const [amount, charge] of defaults) {
-        await query("INSERT INTO charge_presets (amount, charge) VALUES ($1,$2)", [amount, charge]);
+    // Presets used to be global; make them per-outlet.
+    await query(`ALTER TABLE charge_presets ADD COLUMN IF NOT EXISTS outlet_id uuid REFERENCES outlets(id) ON DELETE CASCADE`);
+    // Copy any global (NULL-outlet) presets into a per-outlet set, then drop the globals.
+    await query(`INSERT INTO charge_presets (amount, charge, outlet_id)
+                 SELECT p.amount, p.charge, o.id FROM charge_presets p CROSS JOIN outlets o
+                 WHERE p.outlet_id IS NULL`);
+    await query(`DELETE FROM charge_presets WHERE outlet_id IS NULL`);
+    // Seed default tiers for any outlet that has none yet (existing or new).
+    const { rows: needSeed } = await query(
+      `SELECT o.id FROM outlets o WHERE NOT EXISTS (SELECT 1 FROM charge_presets p WHERE p.outlet_id = o.id)`
+    );
+    for (const o of needSeed) {
+      for (const [amount, charge] of DEFAULT_PRESETS) {
+        await query("INSERT INTO charge_presets (amount, charge, outlet_id) VALUES ($1,$2,$3)", [amount, charge, o.id]);
       }
     }
   } catch (e) {

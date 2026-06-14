@@ -5,13 +5,15 @@ import { wrap, outletOut, accountOut, customerOut, txnOut, presetOut } from "../
 const router = Router();
 
 // One call that returns everything the app needs, shaped exactly like the
-// frontend's state. Cashiers only see their own outlet's transactions; admins
-// see all. The client refetches this periodically to stay in sync.
+// frontend's state. The owner (admin) sees every branch; a non-owner account
+// sees only its OWN transactions and its own outlet's presets. The client
+// refetches this periodically to stay in sync.
 router.get(
   "/",
   wrap(async (req, res) => {
     const isAdmin = req.user.role === "admin";
     const outletId = req.user.outlet_id;
+    const accountId = req.user.sub;
 
     const [outlets, accounts, customers, floats, txns, presets] = await Promise.all([
       query("SELECT * FROM outlets ORDER BY created_at"),
@@ -20,8 +22,10 @@ router.get(
       query("SELECT * FROM outlet_floats"),
       isAdmin
         ? query("SELECT * FROM transactions ORDER BY created_at DESC LIMIT 2000")
-        : query("SELECT * FROM transactions WHERE outlet_id = $1 ORDER BY created_at DESC LIMIT 2000", [outletId]),
-      query("SELECT * FROM charge_presets ORDER BY amount"),
+        : query("SELECT * FROM transactions WHERE account_id = $1 ORDER BY created_at DESC LIMIT 2000", [accountId]),
+      isAdmin
+        ? query("SELECT * FROM charge_presets ORDER BY outlet_id, amount")
+        : query("SELECT * FROM charge_presets WHERE outlet_id = $1 ORDER BY amount", [outletId]),
     ]);
 
     const floatsObj = {};

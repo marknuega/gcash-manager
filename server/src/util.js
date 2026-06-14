@@ -48,7 +48,7 @@ export const txnOut = (r) => ({
   date: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
 });
 
-export const presetOut = (r) => ({ id: r.id, amount: Number(r.amount), charge: Number(r.charge) });
+export const presetOut = (r) => ({ id: r.id, amount: Number(r.amount), charge: Number(r.charge), outlet: r.outlet_id });
 
 // How each service type moves the outlet's cash float. Mirrors SERVICE_TYPES on
 // the client; computed server-side so the float is authoritative.
