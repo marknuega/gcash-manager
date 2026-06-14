@@ -1426,15 +1426,29 @@ function Reports({ctx}){
 
     const outletName=selOutlet==="all"?"All Outlets":outlets.find(o=>o.id===selOutlet)?.name||selOutlet;
     const staffName=accounts.find(a=>a.id===shiftStaff)?.name||"—";
-    const staffOutlet=outlets.find(o=>o.id===accounts.find(a=>a.id===shiftStaff)?.outlet)?.name||"—";
+    const staffOutletId=accounts.find(a=>a.id===shiftStaff)?.outlet||null;
+    const staffOutlet=outlets.find(o=>o.id===staffOutletId)?.name||"—";
 
-    const openFloat=type==="shift"
-      ? "— (not tracked per shift)"
+    // ── Float / cash reconciliation for the shift ──
+    // Cash-in raises the drawer; everything else lowers it. Each txn moves the
+    // float by floatEffect*amount + fee. We have the current (system) float, so
+    // the implied opening float = current − net change during the shift.
+    const cashIn  = filtered.filter(t=>(SERVICE_TYPES[t.type]?.floatEffect||0)>0).reduce((a,t)=>a+Number(t.amount),0);
+    const cashOut = filtered.filter(t=>(SERVICE_TYPES[t.type]?.floatEffect||0)<0).reduce((a,t)=>a+Number(t.amount),0);
+    const floatChange = filtered.reduce((a,t)=>a+(SERVICE_TYPES[t.type]?.floatEffect||0)*Number(t.amount)+Number(t.fee||0),0);
+    const floatOutletId = type==="shift" ? staffOutletId : (selOutlet==="all"?null:selOutlet);
+    const systemFloat = type==="shift"
+      ? Number(floats[staffOutletId]||0)
       : selOutlet==="all"
-        ? peso2(visibleOutlets.reduce((s,o)=>s+Number(floats[o.id]||0),0))
-        : peso2(floats[selOutlet]||0);
+        ? visibleOutlets.reduce((s,o)=>s+Number(floats[o.id]||0),0)
+        : Number(floats[selOutlet]||0);
+    const openingFloat = systemFloat - floatChange;
 
-    return{type,filtered,byService,totalTxns,totalVol,totalFees,outletName,staffName,staffOutlet,reportDate,openFloat};
+    const openFloat=type==="shift" ? peso2(systemFloat)
+      : selOutlet==="all" ? peso2(systemFloat) : peso2(systemFloat);
+
+    return{type,filtered,byService,totalTxns,totalVol,totalFees,outletName,staffName,staffOutlet,reportDate,openFloat,
+      cashIn,cashOut,floatChange,systemFloat,openingFloat,floatOutletId};
   };
 
   // ── load jsPDF then generate PDF ──────────
@@ -1585,6 +1599,35 @@ function Reports({ctx}){
         });
       }
 
+      // ── Float / cash reconciliation (shift) ──
+      if(type==="shift"){
+        if(y>225)doc.addPage(),y=M;
+        y+=4;
+        txt("FLOAT / CASH RECONCILIATION",M,y,{bold:true,size:10,color:"#0070BA"});
+        hline(y+2,"#0070BA"); y+=8;
+        const fRows=[
+          ["Opening float (implied)",d.openingFloat,"#1A1A2E"],
+          ["+ Cash in received",d.cashIn,"#00A859"],
+          ["− Cash out paid",-d.cashOut,"#E02020"],
+          ["+ Fees / charges collected",d.totalFees,"#00A859"],
+          ["= Net float change",d.floatChange,d.floatChange>=0?"#00A859":"#E02020"],
+        ];
+        fRows.forEach((r,i)=>{
+          doc.setFillColor(i%2===0?248:255,i%2===0?250:255,i%2===0?252:255);
+          doc.rect(M,y,cW,7,"F");
+          txt(r[0],M+3,y+5,{size:8});
+          txt(peso2(r[1]),W-M-3,y+5,{size:8,align:"right",color:r[2],bold:r[0].startsWith("=")});
+          y+=7;
+        });
+        // Expected float highlight
+        doc.setFillColor(0,112,186); doc.rect(M,y,cW,8,"F");
+        txt("Expected float (system balance)",M+3,y+5.5,{size:9,bold:true,color:"#ffffff"});
+        txt(peso2(d.systemFloat),W-M-3,y+5.5,{size:9,bold:true,color:"#ffffff",align:"right"});
+        y+=12;
+        txt("Actual cash + e-money count: PHP _______________",M,y,{size:9}); y+=7;
+        txt("Over / (Short) vs expected: PHP _______________",M,y,{size:9}); y+=6;
+      }
+
       // ── Shift closing signature block ──
       if(type==="shift"){
         if(y>230)doc.addPage(),y=M;
@@ -1604,8 +1647,7 @@ function Reports({ctx}){
           if(b.name)txt(b.name,bx,y+28,{size:8,bold:true});
         });
         y+=36;
-        txt("Cash count at end of shift: PHP _______________",M,y,{size:9}); y+=10;
-        txt("Discrepancy (if any): PHP _______________   Remarks: _______________________________________",M,y,{size:9});
+        txt("Remarks: _______________________________________________________________",M,y,{size:9});
       }
 
       // ── Footer ──
@@ -1715,6 +1757,30 @@ function Reports({ctx}){
               <div><span style={{color:C.muted,fontWeight:600}}>Float: </span>{preview.openFloat}</div>
             </div>
           </Card>
+
+          {/* Float / cash reconciliation (shift) */}
+          {preview.type==="shift"&&(
+            <Card style={{marginBottom:12}}>
+              <div style={{fontWeight:700,marginBottom:10}}>💰 Float / Cash Reconciliation</div>
+              {[
+                {l:"Opening float (implied)",v:peso(preview.openingFloat),c:C.ink},
+                {l:"+ Cash in received",v:peso(preview.cashIn),c:C.green},
+                {l:"− Cash out paid",v:peso(preview.cashOut),c:C.red},
+                {l:"+ Fees / charges collected",v:peso(preview.totalFees),c:C.green},
+                {l:"= Net float change",v:peso(preview.floatChange),c:preview.floatChange>=0?C.green:C.red},
+              ].map((r,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"7px 4px",borderBottom:`1px solid ${C.border}`,fontSize:13}}>
+                  <span style={{color:C.muted}}>{r.l}</span>
+                  <span style={{fontWeight:r.l.startsWith("=")?800:600,color:r.c}}>{r.v}</span>
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",padding:"10px 4px",marginTop:4,background:C.blueL,borderRadius:8,fontSize:14}}>
+                <span style={{fontWeight:800,color:C.blue}}>Expected float (system)</span>
+                <span style={{fontWeight:900,color:C.blue}}>{peso(preview.systemFloat)}</span>
+              </div>
+              <div style={{fontSize:12,color:C.muted,marginTop:8}}>Count the actual cash + e-money at end of shift and compare against the expected float to find any over/short.</div>
+            </Card>
+          )}
 
           {/* Totals */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:12}}>
