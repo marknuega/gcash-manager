@@ -6,3 +6,6 @@ dist
 # secrets — never commit
 server/.env
 .env.local
+
+# database backups (contain hashed credentials) — keep off the repo
+server/backups

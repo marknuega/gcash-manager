@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS outlets (
   name        text NOT NULL,
   location    text,
   color       text NOT NULL DEFAULT '#0070BA',
+  archived    boolean NOT NULL DEFAULT false,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 

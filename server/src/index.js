@@ -61,6 +61,8 @@ export const DEFAULT_PRESETS = [[100,5],[200,10],[300,10],[500,10],[1000,15],[15
 
 async function ensureSchema() {
   try {
+    // Soft-delete flag for branches (archive instead of cascade-deleting history).
+    await query(`ALTER TABLE outlets ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false`);
     await query(`CREATE TABLE IF NOT EXISTS charge_presets (
       id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       amount      numeric(12,2) NOT NULL,

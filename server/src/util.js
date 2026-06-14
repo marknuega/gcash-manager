@@ -16,7 +16,7 @@ export function fail(status, message) {
 }
 
 // ── shape DB rows into the exact objects the frontend already uses ──
-export const outletOut = (r) => ({ id: r.id, name: r.name, location: r.location, color: r.color });
+export const outletOut = (r) => ({ id: r.id, name: r.name, location: r.location, color: r.color, archived: r.archived === true });
 
 export const accountOut = (r) => ({
   id: r.id,

@@ -29,12 +29,32 @@ router.post(
   })
 );
 
+// Removing a branch is destructive (its transactions/floats/presets cascade).
+// So if the branch has ANY transaction history, archive it (hide, keep data)
+// instead of deleting. Only an empty branch is permanently removed.
 router.delete(
   "/:id",
   requireRole("admin"),
   wrap(async (req, res) => {
-    await query("DELETE FROM outlets WHERE id = $1", [req.params.id]);
-    res.json({ ok: true });
+    const { id } = req.params;
+    const hist = await query("SELECT 1 FROM transactions WHERE outlet_id = $1 LIMIT 1", [id]);
+    if (hist.rowCount > 0) {
+      const { rows } = await query("UPDATE outlets SET archived = true WHERE id = $1 RETURNING *", [id]);
+      return res.json({ ok: true, archived: true, outlet: rows[0] ? outletOut(rows[0]) : null });
+    }
+    await query("DELETE FROM outlets WHERE id = $1", [id]);
+    res.json({ ok: true, archived: false });
+  })
+);
+
+// Bring an archived branch back.
+router.post(
+  "/:id/restore",
+  requireRole("admin"),
+  wrap(async (req, res) => {
+    const { rows } = await query("UPDATE outlets SET archived = false WHERE id = $1 RETURNING *", [req.params.id]);
+    if (!rows[0]) throw fail(404, "Outlet not found");
+    res.json(outletOut(rows[0]));
   })
 );
 

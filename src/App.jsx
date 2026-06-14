@@ -530,9 +530,24 @@ export default function App(){
     const o=await api.post("/outlets",form);
     setOutlets(p=>[...p,o]);
   };
+  // Deleting a branch with history archives it (keeps its records) instead of
+  // wiping them; an empty branch is removed outright.
   const deleteOutlet=async(id)=>{
-    if(!MOCK) await api.del(`/outlets/${id}`);
-    setOutlets(p=>p.filter(o=>o.id!==id));
+    if(MOCK){
+      const hasTxns=txns.some(t=>t.outlet===id);
+      if(hasTxns) setOutlets(p=>p.map(o=>o.id===id?{...o,archived:true}:o));
+      else setOutlets(p=>p.filter(o=>o.id!==id));
+      return hasTxns;
+    }
+    const r=await api.del(`/outlets/${id}`);
+    if(r.archived) setOutlets(p=>p.map(o=>o.id===id?{...o,archived:true}:o));
+    else setOutlets(p=>p.filter(o=>o.id!==id));
+    return !!r.archived;
+  };
+  const restoreOutlet=async(id)=>{
+    if(MOCK){ setOutlets(p=>p.map(o=>o.id===id?{...o,archived:false}:o)); return; }
+    const o=await api.post(`/outlets/${id}/restore`);
+    setOutlets(p=>p.map(x=>x.id===id?o:x));
   };
 
   const saveAccount=async(editId,form)=>{
@@ -554,16 +569,18 @@ export default function App(){
   const isAdmin = session.role==="admin";
 
   // Only the owner (admin) sees every branch. A non-owner account sees ONLY its
-  // own transactions and its own outlet.
+  // own transactions and its own outlet. Archived branches are hidden from the
+  // active set but kept in `outlets` so historical names still resolve.
   const visibleTxns = isAdmin ? txns : txns.filter(t=>t.accountId===session.id);
-  const visibleOutlets = isAdmin ? outlets : outlets.filter(o=>o.id===session.outlet);
+  const activeOutlets = outlets.filter(o=>!o.archived);
+  const visibleOutlets = isAdmin ? activeOutlets : activeOutlets.filter(o=>o.id===session.outlet);
 
   const TABS = isAdmin
     ? [{id:"dashboard",l:"📊 Dashboard"},{id:"txns",l:"💸 Transactions"},{id:"ledger",l:"📒 Ledger"},{id:"float",l:"💰 Float"},{id:"staff",l:"👥 Staff"},{id:"customers",l:"📋 Customers"},{id:"outlets",l:"🏪 Outlets"},{id:"accounts",l:"🔐 Accounts"},{id:"reports",l:"📄 Reports"}]
     : [{id:"dashboard",l:"📊 My Outlet"},{id:"txns",l:"💸 Transactions"},{id:"ledger",l:"📒 Ledger"},{id:"customers",l:"📋 Customers"},{id:"reports",l:"📄 Reports"}];
 
   const defaultOutletId = getDefaultOutlet(visibleOutlets)?.id || null;
-  const ctx={accounts,outlets,txns,customers,floats,presets,session,isAdmin,visibleTxns,visibleOutlets,defaultOutletId,addTxn,setFloat,addCustomer,deleteCustomer,addOutlet,deleteOutlet,saveAccount,deleteAccount,addPreset,deletePreset,showToast};
+  const ctx={accounts,outlets,txns,customers,floats,presets,session,isAdmin,visibleTxns,visibleOutlets,defaultOutletId,addTxn,setFloat,addCustomer,deleteCustomer,addOutlet,deleteOutlet,restoreOutlet,saveAccount,deleteAccount,addPreset,deletePreset,showToast};
 
   return(
     <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",background:C.bg,minHeight:"100vh",color:C.ink}}>
@@ -1051,9 +1068,12 @@ function CustomerLedger({ctx}){
 // OUTLET MANAGER
 // ─────────────────────────────────────────────
 function OutletManager({ctx}){
-  const {outlets,addOutlet,deleteOutlet,accounts,txns,floats,showToast}=ctx;
+  const {outlets,addOutlet,deleteOutlet,restoreOutlet,accounts,txns,floats,showToast}=ctx;
   const [modal,setModal]=useState(false);
   const [form,setForm]=useState({name:"",location:"",color:C.blue});
+
+  const activeOutlets=outlets.filter(o=>!o.archived);
+  const archivedOutlets=outlets.filter(o=>o.archived);
 
   const submit=async()=>{
     if(!form.name){showToast("Name required.","error");return;}
@@ -1066,8 +1086,19 @@ function OutletManager({ctx}){
   };
 
   const remove=async(id)=>{
-    if(!confirm("Remove outlet?"))return;
-    try{ await deleteOutlet(id); }catch(e){ showToast(e.message||"Could not remove outlet.","error"); }
+    const o=outlets.find(x=>x.id===id);
+    const hasTxns=txns.some(t=>t.outlet===id);
+    const msg=hasTxns
+      ? `"${o?.name}" has transaction history. It will be ARCHIVED (hidden from the app) but all its records are kept safe and can be restored. Continue?`
+      : `Remove "${o?.name}"? This branch has no transactions and will be permanently deleted.`;
+    if(!confirm(msg))return;
+    try{ const archived=await deleteOutlet(id); showToast(archived?"Branch archived (records kept).":"Branch removed."); }
+    catch(e){ showToast(e.message||"Could not remove outlet.","error"); }
+  };
+
+  const restore=async(id)=>{
+    try{ await restoreOutlet(id); showToast("Branch restored."); }
+    catch(e){ showToast(e.message||"Could not restore branch.","error"); }
   };
 
   return(
@@ -1076,7 +1107,7 @@ function OutletManager({ctx}){
         <div style={{fontWeight:800,fontSize:20}}>Outlets</div>
         <Btn onClick={()=>setModal(true)}>+ Add Outlet</Btn>
       </div>
-      {outlets.map(o=>{
+      {activeOutlets.map(o=>{
         const outStaff=accounts.filter(a=>a.outlet===o.id&&a.role==="cashier");
         const todayT=txns.filter(t=>t.outlet===o.id&&t.date.startsWith(todayStr()));
         const fees=todayT.reduce((s,t)=>s+Number(t.fee||0),0);
@@ -1098,7 +1129,7 @@ function OutletManager({ctx}){
                   <Badge color={C.green} bg={C.greenL}>💵 {peso(fees)} today</Badge>
                 </div>
               </div>
-              <Btn onClick={()=>remove(o.id)} variant="danger" small>Remove</Btn>
+              <Btn onClick={()=>remove(o.id)} variant="danger" small>{txns.some(t=>t.outlet===o.id)?"Archive":"Remove"}</Btn>
             </div>
             {outStaff.length>0&&(
               <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
@@ -1111,6 +1142,23 @@ function OutletManager({ctx}){
           </Card>
         );
       })}
+
+      {/* ── Archived branches (records kept, hidden from the app) ── */}
+      {archivedOutlets.length>0&&(
+        <div style={{marginTop:8}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>🗄️ Archived Branches</div>
+          {archivedOutlets.map(o=>(
+            <Card key={o.id} style={{marginBottom:10,opacity:.8,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+              <div>
+                <div style={{fontWeight:800,fontSize:15}}>🏪 {o.name} <Badge color={C.muted} bg={C.border}>Archived</Badge></div>
+                <div style={{fontSize:12,color:C.muted}}>📍 {o.location} · {txns.filter(t=>t.outlet===o.id).length} transactions kept safe</div>
+              </div>
+              <Btn onClick={()=>restore(o.id)} variant="success" small>Restore</Btn>
+            </Card>
+          ))}
+        </div>
+      )}
+
       {modal&&(
         <Modal title="Add Outlet" onClose={()=>setModal(false)}>
           <Inp label="Branch Name" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} placeholder="e.g. Marikina Branch" req/>
