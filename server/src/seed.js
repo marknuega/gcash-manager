@@ -77,6 +77,14 @@ async function run() {
     }
   }
 
+  // Default quick-charge presets (notebook tiers) — only if none exist yet.
+  const presetCount = await query("SELECT count(*)::int AS n FROM charge_presets");
+  if (presetCount.rows[0].n === 0) {
+    for (const [amount, charge] of [[100,5],[200,10],[300,10],[500,10],[1000,15],[1500,20],[2000,30],[3000,45],[5000,75]]) {
+      await query("INSERT INTO charge_presets (amount, charge) VALUES ($1,$2)", [amount, charge]);
+    }
+  }
+
   console.log("✓ Seed complete\n");
   console.log("Logins created:");
   console.log(`  admin / ${ADMIN_PW}      (Owner — all outlets)`);

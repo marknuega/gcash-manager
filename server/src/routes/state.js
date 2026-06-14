@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { query } from "../db.js";
-import { wrap, outletOut, accountOut, customerOut, txnOut } from "../util.js";
+import { wrap, outletOut, accountOut, customerOut, txnOut, presetOut } from "../util.js";
 
 const router = Router();
 
@@ -13,7 +13,7 @@ router.get(
     const isAdmin = req.user.role === "admin";
     const outletId = req.user.outlet_id;
 
-    const [outlets, accounts, customers, floats, txns] = await Promise.all([
+    const [outlets, accounts, customers, floats, txns, presets] = await Promise.all([
       query("SELECT * FROM outlets ORDER BY created_at"),
       query("SELECT * FROM app_users WHERE is_active = true ORDER BY created_at"),
       query("SELECT * FROM customers ORDER BY created_at DESC"),
@@ -21,6 +21,7 @@ router.get(
       isAdmin
         ? query("SELECT * FROM transactions ORDER BY created_at DESC LIMIT 2000")
         : query("SELECT * FROM transactions WHERE outlet_id = $1 ORDER BY created_at DESC LIMIT 2000", [outletId]),
+      query("SELECT * FROM charge_presets ORDER BY amount"),
     ]);
 
     const floatsObj = {};
@@ -32,6 +33,7 @@ router.get(
       customers: customers.rows.map(customerOut),
       floats: floatsObj,
       txns: txns.rows.map(txnOut),
+      presets: presets.rows.map(presetOut),
     });
   })
 );

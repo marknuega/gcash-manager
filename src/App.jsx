@@ -433,7 +433,7 @@ export default function App(){
   const [txns,      setTxns]      = useState(()=>MOCK?ls.get(KEYS.txns,      SEED_TXN):[]);
   const [customers, setCustomers] = useState(()=>MOCK?ls.get(KEYS.customers, SEED_CUSTOMERS):[]);
   const [floats,    setFloats]    = useState(()=>MOCK?ls.get(KEYS.floats,    SEED_FLOATS):{});
-  const [presets,   setPresets]   = useState(()=>ls.get(KEYS.presets, DEFAULT_CHARGE_PRESETS));
+  const [presets,   setPresets]   = useState(()=>MOCK?ls.get(KEYS.presets, DEFAULT_CHARGE_PRESETS):[]);
   const [session,   setSession]   = useState(null);
   const [tab,       setTab]       = useState("dashboard");
   const [toast,     setToast]     = useState(null);
@@ -445,12 +445,18 @@ export default function App(){
   useEffect(()=>{ if(MOCK) ls.set(KEYS.txns,     txns);      },[txns]);
   useEffect(()=>{ if(MOCK) ls.set(KEYS.customers,customers); },[customers]);
   useEffect(()=>{ if(MOCK) ls.set(KEYS.floats,   floats);    },[floats]);
-  // Charge presets are a local convenience (not server data), so persist them
-  // to localStorage in both modes.
-  useEffect(()=>{ ls.set(KEYS.presets, presets); },[presets]);
+  // MOCK keeps presets in localStorage; real mode loads them from the server.
+  useEffect(()=>{ if(MOCK) ls.set(KEYS.presets, presets); },[presets]);
 
-  const addPreset    = (p)=>setPresets(prev=>[...prev,{id:uid(),amount:Number(p.amount),charge:Number(p.charge)}]);
-  const deletePreset = (id)=>setPresets(prev=>prev.filter(p=>p.id!==id));
+  const addPreset=async(p)=>{
+    if(MOCK){ setPresets(prev=>[...prev,{id:uid(),amount:Number(p.amount),charge:Number(p.charge)}]); return; }
+    const created=await api.post("/presets",{amount:Number(p.amount),charge:Number(p.charge)});
+    setPresets(prev=>[...prev,created].sort((a,b)=>a.amount-b.amount));
+  };
+  const deletePreset=async(id)=>{
+    if(!MOCK) await api.del(`/presets/${id}`);
+    setPresets(prev=>prev.filter(p=>p.id!==id));
+  };
 
   const showToast=(msg,type="success")=>{ setToast({msg,type}); setTimeout(()=>setToast(null),2500); };
 
@@ -460,7 +466,7 @@ export default function App(){
     try{
       const s=await api.get("/state");
       setAccounts(s.accounts); setOutlets(s.outlets); setTxns(s.txns);
-      setCustomers(s.customers); setFloats(s.floats);
+      setCustomers(s.customers); setFloats(s.floats); setPresets(s.presets||[]);
     }catch{ /* 401 handled via the gm-unauthorized event */ }
   },[]);
 
@@ -724,7 +730,7 @@ function Transactions({ctx}){
                 <div style={{fontSize:12,color:C.green,fontWeight:700,marginTop:2}}>+{peso(p.charge)} charge</div>
               </button>
               {editPresets&&(
-                <button onClick={()=>deletePreset(p.id)} title="Remove"
+                <button onClick={async()=>{try{await deletePreset(p.id);}catch(e){showToast(e.message||"Could not remove preset.","error");}}} title="Remove"
                   style={{position:"absolute",top:-7,right:-7,width:22,height:22,borderRadius:"50%",border:"none",background:C.red,color:"#fff",fontWeight:900,fontSize:13,cursor:"pointer",lineHeight:1}}>×</button>
               )}
             </div>
@@ -739,9 +745,10 @@ function Transactions({ctx}){
             <div style={{flex:"1 1 120px"}}><div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:4}}>Charge (₱)</div>
               <input type="number" value={newPreset.charge} onChange={e=>setNewPreset(p=>({...p,charge:e.target.value}))}
                 style={{width:"100%",border:`1.5px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:14,background:C.bg,boxSizing:"border-box"}}/></div>
-            <Btn variant="success" onClick={()=>{
+            <Btn variant="success" onClick={async()=>{
               if(!(Number(newPreset.amount)>0)){showToast("Enter a valid amount.","error");return;}
-              addPreset(newPreset); setNewPreset({amount:"",charge:""});
+              try{ await addPreset(newPreset); setNewPreset({amount:"",charge:""}); showToast("Preset added."); }
+              catch(e){ showToast(e.message||"Could not add preset.","error"); }
             }}>+ Add Preset</Btn>
           </div>
         )}

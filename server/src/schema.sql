@@ -63,3 +63,11 @@ CREATE TABLE IF NOT EXISTS outlet_floats (
   balance     numeric(12,2) NOT NULL DEFAULT 0,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- ---------- 6. CHARGE PRESETS (shared quick-charge cards) ----------
+CREATE TABLE IF NOT EXISTS charge_presets (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  amount      numeric(12,2) NOT NULL,
+  charge      numeric(12,2) NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
