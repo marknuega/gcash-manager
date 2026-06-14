@@ -34,6 +34,21 @@ const LOAD_NETWORKS = ["Globe","Smart","DITO","TNT","Sun","TM"];
 const LOAD_DENOMINATIONS = [10,15,20,30,50,60,100,115,150,200,300,500,1000];
 const PERA_PADALA_NETS = ["LBC","Palawan Express","M Lhuillier","Western Union","Cebuana Lhuillier","JRS Express"];
 
+// Quick-charge presets: a repeat transaction amount paired with its usual
+// charge, so common entries are one tap instead of typing. Tiers mirror the
+// agent notebook (₱100→₱5, ₱500→₱10, ₱1,000→₱15, ₱2,000→₱30, ₱5,000→₱75…).
+const DEFAULT_CHARGE_PRESETS = [
+  {id:"p100",  amount:100,  charge:5 },
+  {id:"p200",  amount:200,  charge:10},
+  {id:"p300",  amount:300,  charge:10},
+  {id:"p500",  amount:500,  charge:10},
+  {id:"p1000", amount:1000, charge:15},
+  {id:"p1500", amount:1500, charge:20},
+  {id:"p2000", amount:2000, charge:30},
+  {id:"p3000", amount:3000, charge:45},
+  {id:"p5000", amount:5000, charge:75},
+];
+
 const SEED_OUTLETS = [
   {id:"o0", name:"Bulacan Main",      location:"Bulacan",             color:"#0070BA", isDefault:true},
   {id:"o1", name:"Divisoria Branch",  location:"Divisoria, Manila",  color:"#00A859"},
@@ -76,7 +91,7 @@ const SEED_CUSTOMERS = [
 // ─────────────────────────────────────────────
 // STORAGE
 // ─────────────────────────────────────────────
-const KEYS = {accounts:"gm_accounts",outlets:"gm_outlets",txns:"gm_txns",customers:"gm_customers",floats:"gm_floats"};
+const KEYS = {accounts:"gm_accounts",outlets:"gm_outlets",txns:"gm_txns",customers:"gm_customers",floats:"gm_floats",presets:"gm_presets"};
 const ls = {
   get:(k,d)=>{ try{const v=localStorage.getItem(k); return v?JSON.parse(v):d;}catch{return d;} },
   set:(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} },
@@ -325,12 +340,14 @@ function TxnForm({onSave,onClose,outlets,accounts,currentUser,floats,defaultOutl
 // Mirrors the notebook: pick a direction, an amount, and the charge.
 // In  → cash-in (cash received, drawer up) · Out → cash-out (cash handed out).
 // ─────────────────────────────────────────────
-function LedgerEntryForm({onSave,onClose,outlets,currentUser,floats,defaultOutletId}){
+function LedgerEntryForm({onSave,onClose,outlets,currentUser,floats,defaultOutletId,initial}){
   const isAdmin=currentUser.role==="admin";
   const availOutlets=isAdmin?outlets:outlets.filter(o=>o.id===currentUser.outlet);
   const [dir,setDir]=useState("in");          // "in" | "out"
   const [form,setForm]=useState({
-    amount:"", charge:"", customerName:"", note:"", date:todayStr(),
+    amount: initial?.amount!=null?String(initial.amount):"",
+    charge: initial?.charge!=null?String(initial.charge):"",
+    customerName:"", note:"", date:todayStr(),
     outletId: isAdmin ? (defaultOutletId||"") : currentUser.outlet,
   });
   const [toast,setToast]=useState(null);
@@ -416,6 +433,7 @@ export default function App(){
   const [txns,      setTxns]      = useState(()=>MOCK?ls.get(KEYS.txns,      SEED_TXN):[]);
   const [customers, setCustomers] = useState(()=>MOCK?ls.get(KEYS.customers, SEED_CUSTOMERS):[]);
   const [floats,    setFloats]    = useState(()=>MOCK?ls.get(KEYS.floats,    SEED_FLOATS):{});
+  const [presets,   setPresets]   = useState(()=>ls.get(KEYS.presets, DEFAULT_CHARGE_PRESETS));
   const [session,   setSession]   = useState(null);
   const [tab,       setTab]       = useState("dashboard");
   const [toast,     setToast]     = useState(null);
@@ -427,6 +445,12 @@ export default function App(){
   useEffect(()=>{ if(MOCK) ls.set(KEYS.txns,     txns);      },[txns]);
   useEffect(()=>{ if(MOCK) ls.set(KEYS.customers,customers); },[customers]);
   useEffect(()=>{ if(MOCK) ls.set(KEYS.floats,   floats);    },[floats]);
+  // Charge presets are a local convenience (not server data), so persist them
+  // to localStorage in both modes.
+  useEffect(()=>{ ls.set(KEYS.presets, presets); },[presets]);
+
+  const addPreset    = (p)=>setPresets(prev=>[...prev,{id:uid(),amount:Number(p.amount),charge:Number(p.charge)}]);
+  const deletePreset = (id)=>setPresets(prev=>prev.filter(p=>p.id!==id));
 
   const showToast=(msg,type="success")=>{ setToast({msg,type}); setTimeout(()=>setToast(null),2500); };
 
@@ -529,7 +553,7 @@ export default function App(){
     : [{id:"dashboard",l:"📊 My Outlet"},{id:"txns",l:"💸 Transactions"},{id:"ledger",l:"📒 Ledger"},{id:"customers",l:"📋 Customers"},{id:"reports",l:"📄 Reports"}];
 
   const defaultOutletId = getDefaultOutlet(visibleOutlets)?.id || null;
-  const ctx={accounts,outlets,txns,customers,floats,session,isAdmin,visibleTxns,visibleOutlets,defaultOutletId,addTxn,setFloat,addCustomer,deleteCustomer,addOutlet,deleteOutlet,saveAccount,deleteAccount,showToast};
+  const ctx={accounts,outlets,txns,customers,floats,presets,session,isAdmin,visibleTxns,visibleOutlets,defaultOutletId,addTxn,setFloat,addCustomer,deleteCustomer,addOutlet,deleteOutlet,saveAccount,deleteAccount,addPreset,deletePreset,showToast};
 
   return(
     <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",background:C.bg,minHeight:"100vh",color:C.ink}}>
@@ -649,9 +673,12 @@ function Dashboard({ctx}){
 // TRANSACTIONS
 // ─────────────────────────────────────────────
 function Transactions({ctx}){
-  const {visibleTxns,visibleOutlets,accounts,floats,session,isAdmin,addTxn,outlets,defaultOutletId}=ctx;
+  const {visibleTxns,visibleOutlets,accounts,floats,session,isAdmin,addTxn,outlets,defaultOutletId,presets,addPreset,deletePreset,showToast}=ctx;
   const [modal,setModal]=useState(false);
   const [ledgerModal,setLedgerModal]=useState(false);
+  const [ledgerInit,setLedgerInit]=useState(null);   // prefill from a charge preset
+  const [editPresets,setEditPresets]=useState(false);
+  const [newPreset,setNewPreset]=useState({amount:"",charge:""});
   const [fOut,setFOut]=useState("");
   const [fType,setFType]=useState("");
   const [fDate,setFDate]=useState(todayStr());
@@ -673,10 +700,52 @@ function Transactions({ctx}){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <div style={{fontWeight:800,fontSize:20}}>Transactions</div>
         <div style={{display:"flex",gap:8}}>
-          <Btn onClick={()=>setLedgerModal(true)} variant="ghost">📒 Ledger Entry</Btn>
+          <Btn onClick={()=>{setLedgerInit(null);setLedgerModal(true);}} variant="ghost">📒 Ledger Entry</Btn>
           <Btn onClick={()=>setModal(true)}>+ New Transaction</Btn>
         </div>
       </div>
+
+      {/* ── Quick Charge presets ── tap a repeat amount instead of typing ── */}
+      <Card style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontWeight:700}}>⚡ Quick Charge</div>
+          <button onClick={()=>setEditPresets(e=>!e)}
+            style={{background:"none",border:"none",color:C.blue,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+            {editPresets?"Done":"Edit"}
+          </button>
+        </div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Tap an amount to start a ledger entry with its charge already filled in.</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(108px,1fr))",gap:10}}>
+          {presets.map(p=>(
+            <div key={p.id} style={{position:"relative"}}>
+              <button onClick={()=>{setLedgerInit({amount:p.amount,charge:p.charge});setLedgerModal(true);}}
+                style={{width:"100%",background:C.blueL,border:`1.5px solid ${C.blue}33`,borderRadius:12,padding:"12px 8px",cursor:"pointer",textAlign:"center"}}>
+                <div style={{fontWeight:900,fontSize:17,color:C.blue}}>{peso(p.amount)}</div>
+                <div style={{fontSize:12,color:C.green,fontWeight:700,marginTop:2}}>+{peso(p.charge)} charge</div>
+              </button>
+              {editPresets&&(
+                <button onClick={()=>deletePreset(p.id)} title="Remove"
+                  style={{position:"absolute",top:-7,right:-7,width:22,height:22,borderRadius:"50%",border:"none",background:C.red,color:"#fff",fontWeight:900,fontSize:13,cursor:"pointer",lineHeight:1}}>×</button>
+              )}
+            </div>
+          ))}
+          {presets.length===0&&<div style={{fontSize:13,color:C.muted}}>No presets. Add one →</div>}
+        </div>
+        {editPresets&&(
+          <div style={{display:"flex",gap:8,alignItems:"flex-end",marginTop:14,flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 120px"}}><div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:4}}>Amount (₱)</div>
+              <input type="number" value={newPreset.amount} onChange={e=>setNewPreset(p=>({...p,amount:e.target.value}))}
+                style={{width:"100%",border:`1.5px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:14,background:C.bg,boxSizing:"border-box"}}/></div>
+            <div style={{flex:"1 1 120px"}}><div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:4}}>Charge (₱)</div>
+              <input type="number" value={newPreset.charge} onChange={e=>setNewPreset(p=>({...p,charge:e.target.value}))}
+                style={{width:"100%",border:`1.5px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:14,background:C.bg,boxSizing:"border-box"}}/></div>
+            <Btn variant="success" onClick={()=>{
+              if(!(Number(newPreset.amount)>0)){showToast("Enter a valid amount.","error");return;}
+              addPreset(newPreset); setNewPreset({amount:"",charge:""});
+            }}>+ Add Preset</Btn>
+          </div>
+        )}
+      </Card>
 
       <Card style={{marginBottom:14}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10}}>
@@ -724,7 +793,7 @@ function Transactions({ctx}){
       })}
 
       {modal&&<TxnForm onSave={(data)=>{addTxn(data);setModal(false);}} onClose={()=>setModal(false)} outlets={outlets} accounts={accounts} currentUser={session} floats={floats} defaultOutletId={defaultOutletId}/>}
-      {ledgerModal&&<LedgerEntryForm onSave={(data)=>{addTxn(data);setLedgerModal(false);}} onClose={()=>setLedgerModal(false)} outlets={visibleOutlets} currentUser={session} floats={floats} defaultOutletId={defaultOutletId}/>}
+      {ledgerModal&&<LedgerEntryForm initial={ledgerInit} onSave={(data)=>{addTxn(data);setLedgerModal(false);setLedgerInit(null);}} onClose={()=>{setLedgerModal(false);setLedgerInit(null);}} outlets={visibleOutlets} currentUser={session} floats={floats} defaultOutletId={defaultOutletId}/>}
     </div>
   );
 }
