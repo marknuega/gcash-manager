@@ -432,8 +432,8 @@ export default function App(){
   const visibleOutlets = isAdmin ? outlets : outlets.filter(o=>o.id===session.outlet);
 
   const TABS = isAdmin
-    ? [{id:"dashboard",l:"📊 Dashboard"},{id:"txns",l:"💸 Transactions"},{id:"float",l:"💰 Float"},{id:"staff",l:"👥 Staff"},{id:"customers",l:"📋 Customers"},{id:"outlets",l:"🏪 Outlets"},{id:"accounts",l:"🔐 Accounts"},{id:"reports",l:"📄 Reports"}]
-    : [{id:"dashboard",l:"📊 My Outlet"},{id:"txns",l:"💸 Transactions"},{id:"customers",l:"📋 Customers"},{id:"reports",l:"📄 Reports"}];
+    ? [{id:"dashboard",l:"📊 Dashboard"},{id:"txns",l:"💸 Transactions"},{id:"ledger",l:"📒 Ledger"},{id:"float",l:"💰 Float"},{id:"staff",l:"👥 Staff"},{id:"customers",l:"📋 Customers"},{id:"outlets",l:"🏪 Outlets"},{id:"accounts",l:"🔐 Accounts"},{id:"reports",l:"📄 Reports"}]
+    : [{id:"dashboard",l:"📊 My Outlet"},{id:"txns",l:"💸 Transactions"},{id:"ledger",l:"📒 Ledger"},{id:"customers",l:"📋 Customers"},{id:"reports",l:"📄 Reports"}];
 
   const ctx={accounts,outlets,txns,customers,floats,session,isAdmin,visibleTxns,visibleOutlets,addTxn,setFloat,addCustomer,deleteCustomer,addOutlet,deleteOutlet,saveAccount,deleteAccount,showToast};
 
@@ -465,6 +465,7 @@ export default function App(){
       <div style={{padding:"20px 14px",maxWidth:920,margin:"0 auto"}}>
         {tab==="dashboard"  && <Dashboard ctx={ctx}/>}
         {tab==="txns"       && <Transactions ctx={ctx}/>}
+        {tab==="ledger"     && <Ledger ctx={ctx}/>}
         {tab==="float"      && <FloatTracker ctx={ctx}/>}
         {tab==="staff"      && <StaffPanel ctx={ctx}/>}
         {tab==="customers"  && <CustomerLedger ctx={ctx}/>}
@@ -1020,6 +1021,148 @@ function AccountManager({ctx}){
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// LEDGER  (passbook: DATE · IN · OUT · CHARGE · running TOTAL)
+// Mirrors the handwritten GCash agent notebook. Cash-in adds cash to the
+// drawer (IN); every other service hands cash out (OUT). CHARGE = the fee,
+// and TOTAL is the running cumulative of all charges = total "kita".
+// ─────────────────────────────────────────────
+function Ledger({ctx}){
+  const {visibleTxns}=ctx;
+  const [month,setMonth]=useState("all"); // "all" | "YYYY-MM"
+
+  const num=n=>Number(n).toLocaleString("en-PH");
+  const monthLabel=m=>new Date(m+"-01T00:00:00").toLocaleDateString("en-PH",{month:"long",year:"numeric"});
+  const dayLabel=iso=>new Date(iso).toLocaleDateString("en-PH",{month:"numeric",day:"numeric"});
+
+  // Chronological order so the running TOTAL accumulates exactly like the notebook.
+  const chron=[...visibleTxns].sort((a,b)=>new Date(a.date)-new Date(b.date));
+  let run=0;
+  const rows=chron.map(t=>{
+    const charge=Number(t.fee||0);
+    run+=charge;
+    const isIn=(SERVICE_TYPES[t.type]?.floatEffect||0)>0;
+    return{ id:t.id, date:t.date, ym:t.date.slice(0,7),
+      inAmt:isIn?Number(t.amount):0, outAmt:isIn?0:Number(t.amount), charge, total:run,
+      type:t.type, name:t.customerName||"" };
+  });
+
+  const months=[...new Set(rows.map(r=>r.ym))].sort();
+
+  // Monthly Kita summary with a running cumulative (the "GCASH KITA" page).
+  let mrun=0;
+  const monthly=months.map(m=>{
+    const kita=rows.filter(r=>r.ym===m).reduce((s,r)=>s+r.charge,0);
+    mrun+=kita;
+    return{month:m,kita,total:mrun};
+  });
+
+  const shown = month==="all" ? rows : rows.filter(r=>r.ym===month);
+  const tIn   = shown.reduce((s,r)=>s+r.inAmt,0);
+  const tOut  = shown.reduce((s,r)=>s+r.outAmt,0);
+  const tChg  = shown.reduce((s,r)=>s+r.charge,0);
+
+  const th={padding:"9px 10px",textAlign:"right",fontWeight:800,fontSize:12,color:"#fff",whiteSpace:"nowrap"};
+  const td={padding:"7px 10px",textAlign:"right",fontSize:13,whiteSpace:"nowrap"};
+
+  return(
+    <div>
+      <div style={{fontWeight:800,fontSize:20,marginBottom:4}}>GCash Ledger / Passbook</div>
+      <div style={{fontSize:13,color:C.muted,marginBottom:16}}>
+        Running record of cash <strong>in</strong>, cash <strong>out</strong>, charges, and total kita — just like your notebook.
+      </div>
+
+      {/* ── Monthly Kita summary (GCASH KITA) ── */}
+      {monthly.length>0&&(
+        <Card style={{marginBottom:16}}>
+          <div style={{fontWeight:800,marginBottom:12,fontSize:15}}>📒 GCash Kita — Monthly</div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead>
+                <tr style={{background:C.green}}>
+                  <th style={{...th,textAlign:"left"}}>Month</th>
+                  <th style={th}>Kita</th>
+                  <th style={th}>Running Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthly.map((m,i)=>(
+                  <tr key={m.month} style={{background:i%2===0?C.bg:C.white}}>
+                    <td style={{...td,textAlign:"left",fontWeight:700}}>{monthLabel(m.month)}</td>
+                    <td style={{...td,color:C.green,fontWeight:700}}>{peso(m.kita)}</td>
+                    <td style={{...td,fontWeight:800}}>{peso(m.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* ── Month filter ── */}
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+        {["all",...months].map(m=>(
+          <button key={m} onClick={()=>setMonth(m)}
+            style={{padding:"6px 14px",borderRadius:99,border:`1.5px solid ${month===m?C.blue:C.border}`,
+              background:month===m?C.blue:C.white,color:month===m?"#fff":C.muted,fontWeight:700,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>
+            {m==="all"?"All":monthLabel(m)}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Passbook table ── */}
+      <Card style={{overflowX:"auto",padding:0}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead>
+            <tr style={{background:C.ink}}>
+              <th style={{...th,textAlign:"left"}}>Date</th>
+              <th style={th}>In</th>
+              <th style={th}>Out</th>
+              <th style={th}>Charge</th>
+              <th style={th}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.length===0&&(
+              <tr><td colSpan={5} style={{padding:"28px 10px",textAlign:"center",color:C.muted}}>No entries yet.</td></tr>
+            )}
+            {shown.map((r,i)=>{
+              const prev=shown[i-1];
+              const newDay=!prev||prev.date.slice(0,10)!==r.date.slice(0,10);
+              return(
+                <tr key={r.id} style={{background:i%2===0?C.bg:C.white,borderTop:newDay?`2px solid ${C.border}`:"none"}}>
+                  <td style={{...td,textAlign:"left",fontWeight:700,color:newDay?C.ink:"transparent"}}>{newDay?dayLabel(r.date):"·"}</td>
+                  <td style={{...td,color:C.green,fontWeight:r.inAmt?700:400}}>{r.inAmt?num(r.inAmt):"—"}</td>
+                  <td style={{...td,color:C.orange,fontWeight:r.outAmt?700:400}}>{r.outAmt?num(r.outAmt):"—"}</td>
+                  <td style={{...td,color:C.blue,fontWeight:600}}>{r.charge?num(r.charge):"—"}</td>
+                  <td style={{...td,fontWeight:800}}>{num(r.total)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          {shown.length>0&&(
+            <tfoot>
+              <tr style={{background:C.blueL,borderTop:`2px solid ${C.blue}`}}>
+                <td style={{...td,textAlign:"left",fontWeight:800,color:C.blue}}>
+                  {month==="all"?"All months":monthLabel(month)}
+                </td>
+                <td style={{...td,fontWeight:800,color:C.green}}>{num(tIn)}</td>
+                <td style={{...td,fontWeight:800,color:C.orange}}>{num(tOut)}</td>
+                <td style={{...td,fontWeight:800,color:C.blue}}>{num(tChg)}</td>
+                <td style={{...td,fontWeight:900}}>{shown.length?num(shown[shown.length-1].total):0}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      <div style={{fontSize:12,color:C.muted,marginTop:10}}>
+        <strong style={{color:C.green}}>In</strong> = cash-in (cash received) · <strong style={{color:C.orange}}>Out</strong> = cash-out / padala / bills / load ·
+        <strong style={{color:C.blue}}> Charge</strong> = your fee · <strong>Total</strong> = running kita.
+      </div>
     </div>
   );
 }
