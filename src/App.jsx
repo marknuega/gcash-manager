@@ -438,6 +438,8 @@ export default function App(){
   const [floats,    setFloats]    = useState(()=>MOCK?ls.get(KEYS.floats,    SEED_FLOATS):{});
   const [presets,   setPresets]   = useState(()=>MOCK?ls.get(KEYS.presets, seedPresets(SEED_OUTLETS)):[]);
   const [session,   setSession]   = useState(null);
+  // const [authChecking, setAuthChecking] = useState(!MOCK);
+  const [authChecking, setAuthChecking] = useState(!MOCK);
   const [tab,       setTab]       = useState("dashboard");
   const [toast,     setToast]     = useState(null);
 
@@ -485,7 +487,42 @@ export default function App(){
   },[session,loadState]);
 
   // Token expired server-side -> back to the login screen.
+  // // On refresh: if a token is saved, restore the session from it.
+  // useEffect(()=>{
+  //   if(MOCK){ setAuthChecking(false); return; }
+  //   if(!getToken()){ setAuthChecking(false); return; }
+  //   let cancelled=false;
+  //   (async()=>{
+  //     try{
+  //       const { user } = await api.get("/auth/me");
+  //       if(!cancelled) setSession(user);
+  //     }catch{
+  //       setToken(null);
+  //     }finally{
+  //       if(!cancelled) setAuthChecking(false);
+  //     }
+  //   })();
+  //   return ()=>{ cancelled=true; };
+  // },[]);
+  // On refresh: if a token is saved, restore the session from it.
   useEffect(()=>{
+    if(MOCK){ setAuthChecking(false); return; }
+    if(!getToken()){ setAuthChecking(false); return; }
+    let cancelled=false;
+    (async()=>{
+      try{
+        const { user } = await api.get("/auth/me");
+        if(!cancelled) setSession(user);
+      }catch{
+        setToken(null);
+      }finally{
+        if(!cancelled) setAuthChecking(false);
+      }
+    })();
+    return ()=>{ cancelled=true; };
+  },[]);
+  useEffect(()=>{
+    // const onUnauth=()=>
     const onUnauth=()=>{ setToken(null); setSession(null); };
     window.addEventListener("gm-unauthorized",onUnauth);
     return ()=>window.removeEventListener("gm-unauthorized",onUnauth);
@@ -563,6 +600,18 @@ export default function App(){
     if(!MOCK) await api.del(`/accounts/${id}`);
     setAccounts(p=>p.filter(a=>a.id!==id));
   };
+
+  // if(authChecking) return (
+  //   <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.muted,fontSize:15,fontWeight:600}}>
+  //     Loading…
+  //   </div>
+  // );
+
+  if(authChecking) return (
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.muted,fontSize:15,fontWeight:600}}>
+      Loading…
+    </div>
+  );
 
   if(!session) return <LoginScreen accounts={accounts} onLogin={setSession}/>;
 
